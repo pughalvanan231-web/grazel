@@ -188,21 +188,12 @@ export function ReviewOrderPage() {
             </p>
           </div>
 
-<<<<<<< HEAD
           {order && (
             <div className="mb-8 p-4 bg-primary/5 border border-primary/20 text-foreground text-xs rounded-sm flex items-start gap-3">
               <CheckCircle2 className="h-5 w-5 text-primary mt-0.5 flex-shrink-0" />
               <div>
                 <p className="font-semibold text-sm">Verified Purchase Review</p>
                 <p className="mt-1 opacity-90 text-muted-foreground">Thank you for your order ({order.id || order.order_number}). Rate the items below to help our atelier and community.</p>
-=======
-          {order && order.status !== 'Delivered' && (
-            <div className="mb-8 p-4 bg-yellow-50 border border-yellow-200 text-yellow-800 text-xs rounded-sm flex items-start gap-3">
-              <AlertCircle className="h-5 w-5 text-yellow-600 mt-0.5 flex-shrink-0" />
-              <div>
-                <p className="font-semibold text-sm">Review Submission Restricted</p>
-                <p className="mt-1 opacity-90 text-muted-foreground">Reviews can only be submitted after your order is successfully delivered. Current order status: <span className="font-semibold text-foreground">{order.status}</span>.</p>
->>>>>>> e2f49478fcf269ddb1125a4952e8e043e6a7bbb1
               </div>
             </div>
           )}
@@ -266,11 +257,7 @@ export function ReviewOrderPage() {
                             key={value}
                             type="button"
                             onClick={() => updateDraft(item.id, { rating: value })}
-<<<<<<< HEAD
                             disabled={isSubmitted}
-=======
-                            disabled={isSubmitted || order.status !== 'Delivered'}
->>>>>>> e2f49478fcf269ddb1125a4952e8e043e6a7bbb1
                             className="text-primary transition-transform hover:scale-110 disabled:hover:scale-100 disabled:opacity-50"
                             aria-label={`${value} star${value > 1 ? 's' : ''}`}
                           >

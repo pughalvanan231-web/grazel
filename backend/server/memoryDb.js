@@ -14,8 +14,8 @@ mockUsers.set('admin@grazel.com', {
   created_at: new Date().toISOString(),
 });
 
+
 export const mockOrders = [];
-<<<<<<< HEAD
 export const mockReviews = [
   {
     id: 'rev_seed_1',
@@ -116,9 +116,7 @@ export const mockReviews = [
     createdAt: new Date(Date.now() - 2 * 86400000).toISOString(),
   },
 ];
-=======
-export const mockReviews = [];
->>>>>>> e2f49478fcf269ddb1125a4952e8e043e6a7bbb1
+
 
 export const defaultSizeGuides = [
   // Top size guide

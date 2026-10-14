@@ -15,12 +15,7 @@ import { ClientInquiry } from '@/components/editorial/ClientInquiry';
 
 import { FeaturedProducts } from '@/components/home/FeaturedProducts';
 import { ProductGrid } from '@/components/product/ProductGrid';
-<<<<<<< HEAD
 import { ProductCard } from '@/components/product/ProductCard';
-=======
-import { EditorialBanner } from '@/components/home/EditorialBanner';
-import { ExploreMoreSection } from '@/components/community/ExploreMoreSection';
->>>>>>> e2f49478fcf269ddb1125a4952e8e043e6a7bbb1
 import { BundleShowcase } from '@/components/bundles/BundleShowcase';
 import { useProducts } from '@/context/ProductContext';
 import { Link } from 'react-router-dom';
@@ -137,44 +132,23 @@ const Index = () => {
       {preOrderProducts.length > 0 && (
         <section className="py-24 lg:py-32 bg-ivory border-t border-b border-charcoal/10">
           <div className="container">
-<<<<<<< HEAD
             <div className="flex flex-col md:items-start gap-4 mb-14">
               <div>
                 <span className="eyebrow-luxury mb-3 block">ATELIER PREVIEWS</span>
                 <h2 className="font-serif text-3xl lg:text-5xl text-charcoal tracking-tight">
                   Pre-Order Ahead of Season
-=======
-            <div className="flex flex-col md:items-start gap-4 mb-10">
-              <div>
-                <div className="flex items-center gap-2 mb-3">
-                  <span className="text-xs uppercase tracking-[0.25em] text-primary font-medium">Coming Soon</span>
-                </div>
-                <h2 className="font-serif text-3xl lg:text-4xl text-foreground">
-                  Pre-Order Now
->>>>>>> e2f49478fcf269ddb1125a4952e8e043e6a7bbb1
                 </h2>
                 <p className="mt-3 text-sm text-muted-foreground font-sans leading-relaxed max-w-lg">
                   Reserve strictly limited upcoming production runs before allocation closes.
                 </p>
               </div>
             </div>
-<<<<<<< HEAD
-
             <ProductGrid products={preOrderProducts} columns={4} />
 
             <div className="mt-14 flex justify-center">
               <Link
                 to="/all?filter=preorder"
                 className="flex items-center gap-2 px-10 py-4 border border-gold text-xs uppercase tracking-[0.22em] font-semibold text-gold hover:bg-gold hover:text-white transition-all group"
-=======
-            
-            <ProductGrid products={preOrderProducts} columns={4} />
-
-            <div className="mt-12 flex justify-center">
-              <Link
-                to="/all?filter=preorder"
-                className="flex items-center gap-2 px-6 py-3 border border-primary/20 text-xs uppercase tracking-[0.15em] text-foreground hover:bg-primary/5 hover:text-primary transition-all group"
->>>>>>> e2f49478fcf269ddb1125a4952e8e043e6a7bbb1
               >
                 <span>View All Pre-Orders</span>
                 <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />

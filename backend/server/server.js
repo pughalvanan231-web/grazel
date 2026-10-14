@@ -1114,40 +1114,24 @@ app.get('/api/reviews', async (req, res) => {
         return res.json(data.map(formatReview));
       }
     }
-<<<<<<< HEAD
     const filtered = productId
       ? mockReviews.filter(r => (r.product_id === productId || r.productId === productId))
       : mockReviews;
     res.json(filtered.map(formatReview));
-=======
-    const filtered = productId ? mockReviews.filter(r => r.product_id === productId) : mockReviews;
-    res.json(filtered);
->>>>>>> e2f49478fcf269ddb1125a4952e8e043e6a7bbb1
   } catch (err) {
     console.error('GET /api/reviews error:', err);
     res.status(500).json({ error: 'Failed to fetch reviews' });
   }
 });
 
-<<<<<<< HEAD
 // GET review eligibility for a product
 app.get('/api/reviews/eligibility', async (req, res) => {
   try {
     const { productId } = req.query;
-=======
-// GET review eligibility for a product (logged-in user only)
-app.get('/api/reviews/eligibility', verifyToken, async (req, res) => {
-  try {
-    const { productId } = req.query;
-    const userId = req.user.id;
-    const email = req.user.email;
-
->>>>>>> e2f49478fcf269ddb1125a4952e8e043e6a7bbb1
     if (!productId) {
       return res.status(400).json({ error: 'productId is required' });
     }
 
-<<<<<<< HEAD
     // Check auth token optionally
     const authHeader = req.headers.authorization;
     const token = authHeader?.split(' ')[1];
@@ -1167,37 +1151,17 @@ app.get('/api/reviews/eligibility', verifyToken, async (req, res) => {
       return res.json({ eligible: true });
     }
 
-=======
->>>>>>> e2f49478fcf269ddb1125a4952e8e043e6a7bbb1
     let ordersList = [];
     if (supabase) {
       const { data, error } = await supabase
         .from('orders')
         .select('*')
         .or(`user_id.eq.${userId},customer_email.eq.${email}`);
-<<<<<<< HEAD
       if (!error) ordersList = data || [];
-=======
-      if (error) throw error;
-      ordersList = data || [];
->>>>>>> e2f49478fcf269ddb1125a4952e8e043e6a7bbb1
     } else {
       ordersList = mockOrders.filter(o => o.user_id === userId || (o.customer_email && o.customer_email.toLowerCase() === email.toLowerCase()));
     }
 
-<<<<<<< HEAD
-=======
-    const deliveredOrders = ordersList.filter(o => o.status === 'Delivered');
-    const purchasedOrder = deliveredOrders.find(o => {
-      const items = o.items || [];
-      return items.some(item => String(item.productId) === String(productId));
-    });
-
-    if (!purchasedOrder) {
-      return res.json({ eligible: false, reason: 'not_purchased' });
-    }
-
->>>>>>> e2f49478fcf269ddb1125a4952e8e043e6a7bbb1
     // Check if already reviewed
     let reviewed = false;
     if (supabase) {
@@ -1211,11 +1175,7 @@ app.get('/api/reviews/eligibility', verifyToken, async (req, res) => {
         reviewed = true;
       }
     } else {
-<<<<<<< HEAD
       reviewed = mockReviews.some(r => (r.product_id === productId || r.productId === productId) && r.user_id === userId);
-=======
-      reviewed = mockReviews.some(r => r.product_id === productId && r.user_id === userId);
->>>>>>> e2f49478fcf269ddb1125a4952e8e043e6a7bbb1
     }
 
     if (reviewed) {
@@ -1229,7 +1189,6 @@ app.get('/api/reviews/eligibility', verifyToken, async (req, res) => {
   }
 });
 
-<<<<<<< HEAD
 // POST a review
 app.post('/api/reviews', async (req, res) => {
   try {
@@ -1241,14 +1200,6 @@ app.post('/api/reviews', async (req, res) => {
     const rating = Number(req.body.rating);
     const title = req.body.title || '';
     const comment = req.body.comment || '';
-=======
-// POST a review (after checkout, requires verified delivered purchase)
-app.post('/api/reviews', verifyToken, async (req, res) => {
-  try {
-    const { productId, productName, orderId, orderItemId, customerName, rating, title, comment } = req.body;
-    const userId = req.user.id;
-    const userEmail = req.user.email;
->>>>>>> e2f49478fcf269ddb1125a4952e8e043e6a7bbb1
 
     // Extract auth user if present
     const authHeader = req.headers.authorization;
@@ -1272,36 +1223,10 @@ app.post('/api/reviews', verifyToken, async (req, res) => {
       return res.status(400).json({ message: 'rating must be between 1 and 5' });
     }
 
-<<<<<<< HEAD
-=======
-    // 1. Verify eligibility (must have purchased and been delivered)
-    let ordersList = [];
-    if (supabase) {
-      const { data, error } = await supabase
-        .from('orders')
-        .select('*')
-        .or(`user_id.eq.${userId},customer_email.eq.${userEmail}`);
-      if (!error) ordersList = data || [];
-    } else {
-      ordersList = mockOrders.filter(o => o.user_id === userId || (o.customer_email && o.customer_email.toLowerCase() === userEmail.toLowerCase()));
-    }
-
-    const deliveredOrders = ordersList.filter(o => o.status === 'Delivered');
-    const purchasedOrder = deliveredOrders.find(o => {
-      const items = o.items || [];
-      return items.some(item => String(item.productId) === String(productId));
-    });
-
-    if (!purchasedOrder) {
-      return res.status(403).json({ message: 'You can only review products from orders that have been successfully delivered.' });
-    }
-
->>>>>>> e2f49478fcf269ddb1125a4952e8e043e6a7bbb1
     const reviewId = `rev_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const now = new Date().toISOString();
 
     if (supabase) {
-<<<<<<< HEAD
       try {
         const { data, error } = await supabase
           .from('reviews')
@@ -1321,26 +1246,6 @@ app.post('/api/reviews', verifyToken, async (req, res) => {
           }])
           .select()
           .single();
-=======
-      const { data, error } = await supabase
-        .from('reviews')
-        .insert([{
-          id: reviewId,
-          product_id: productId,
-          order_id: orderId || purchasedOrder.id,
-          order_item_id: orderItemId || null,
-          user_id: userId,
-          customer_name: customerName,
-          rating,
-          title: title || null,
-          comment: comment || null,
-          is_approved: true,
-          created_at: now,
-          updated_at: now,
-        }])
-        .select()
-        .single();
->>>>>>> e2f49478fcf269ddb1125a4952e8e043e6a7bbb1
 
         if (!error && data) {
           return res.status(201).json(formatReview(data));
@@ -1350,7 +1255,6 @@ app.post('/api/reviews', verifyToken, async (req, res) => {
       }
     }
 
-<<<<<<< HEAD
     const review = {
       id: reviewId,
       product_id: productId,
@@ -1365,26 +1269,10 @@ app.post('/api/reviews', verifyToken, async (req, res) => {
       userId: userId,
       customer_name: customerName,
       customerName: customerName,
-=======
-    // Local in-memory duplicate check
-    const alreadyReviewed = mockReviews.some(r => r.product_id === productId && r.user_id === userId);
-    if (alreadyReviewed) {
-      return res.status(409).json({ message: 'You have already reviewed this item' });
-    }
-
-    const review = {
-      id: reviewId,
-      product_id: productId,
-      order_id: orderId || purchasedOrder.id,
-      order_item_id: orderItemId || null,
-      user_id: userId,
-      customer_name: customerName,
->>>>>>> e2f49478fcf269ddb1125a4952e8e043e6a7bbb1
       rating,
       title: title || null,
       comment: comment || null,
       is_approved: true,
-<<<<<<< HEAD
       isApproved: true,
       created_at: now,
       createdAt: now,
@@ -1393,13 +1281,6 @@ app.post('/api/reviews', verifyToken, async (req, res) => {
 
     mockReviews.unshift(review);
     res.status(201).json(formatReview(review));
-=======
-      created_at: now,
-      updated_at: now,
-    };
-    mockReviews.push(review);
-    res.status(201).json(review);
->>>>>>> e2f49478fcf269ddb1125a4952e8e043e6a7bbb1
   } catch (err) {
     console.error('POST /api/reviews error:', err);
     res.status(500).json({ message: err.message || 'Failed to save review' });
