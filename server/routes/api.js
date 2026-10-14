@@ -1,0 +1,1824 @@
+/**
+ * ============================================================================
+ * GRAZEL ATELIER - COMPREHENSIVE API ROUTES
+ * ============================================================================
+ * Enhanced API endpoints for:
+ * - Payment processing (Razorpay)
+ * - Shipping calculation
+ * - Discounts & Bundles
+ * - Order tracking & management
+ * - Email subscriptions
+ * ============================================================================
+ */
+
+import express from 'express';
+import crypto from 'crypto';
+import Razorpay from 'razorpay';
+import nodemailer from 'nodemailer';
+import { createClient } from '@supabase/supabase-js';
+import emailService from '../services/emailService.js';
+import jwt from 'jsonwebtoken';
+import { mockOrders, mockReviews, mockSizeGuides } from '../memoryDb.js';
+
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
+
+const verifyToken = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.split(' ')[1];
+  if (!token) {
+    return res.status(401).json({ error: 'No token provided' });
+  }
+  try {
+    req.user = jwt.verify(token, JWT_SECRET);
+    next();
+  } catch {
+    return res.status(401).json({ error: 'Invalid or expired token' });
+  }
+};
+
+const requireAdmin = (req, res, next) => {
+  if (req.user?.role !== 'admin') {
+    return res.status(403).json({ error: 'Administrator access required' });
+  }
+  next();
+};
+
+const router = express.Router();
+
+// ─── Initialize Razorpay (with lazy initialization) ─────────────────────────
+let razorpayInstance = null;
+function initializeRazorpay() {
+  if (!razorpayInstance && process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET) {
+    try {
+      razorpayInstance = new Razorpay({
+        key_id: process.env.RAZORPAY_KEY_ID,
+        key_secret: process.env.RAZORPAY_KEY_SECRET,
+      });
+    } catch (err) {
+      console.warn('⚠ Razorpay initialization failed:', err.message);
+    }
+  }
+  return razorpayInstance;
+}
+
+// ─── Initialize Supabase ─────────────────────────────────────────────────────
+let supabase = null;
+function initializeSupabase() {
+  if (!supabase) {
+    const supabaseUrl = process.env.VITE_SUPABASE_URL;
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (supabaseUrl && supabaseServiceKey) {
+      try {
+        supabase = createClient(supabaseUrl, supabaseServiceKey, {
+          auth: { autoRefreshToken: false, persistSession: false },
+        });
+        console.log('✓ Supabase initialized in api routes');
+      } catch (err) {
+        console.warn('⚠ Supabase initialization failed:', err.message);
+      }
+    } else {
+      console.warn('⚠ Missing VITE_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY');
+    }
+  }
+  return supabase;
+}
+// Eagerly initialize so all routes share the same client instance
+initializeSupabase();
+
+// ─── Email configuration ──────────────────────────────────────────────────
+let transporter = null;
+function initializeEmailTransporter() {
+  if (!transporter) {
+    const user = process.env.EMAIL_USER;
+    // Strip spaces from Gmail App Passwords (Google shows them spaced for readability)
+    const pass = (process.env.EMAIL_PASSWORD || '').replace(/\s/g, '');
+
+    if (!user || !pass) {
+      console.warn('⚠ EMAIL_USER or EMAIL_PASSWORD not set in environment');
+      return null;
+    }
+
+    try {
+      transporter = nodemailer.createTransport({
+        host: 'smtp.gmail.com',
+        port: 465,
+        secure: true,          // SSL
+        auth: { user, pass },
+      });
+      console.log('✓ Email transporter initialized:', user);
+    } catch (err) {
+      console.warn('⚠ Email transporter initialization failed:', err.message);
+    }
+  }
+  return transporter;
+}
+// Eagerly initialize so the transporter is ready on first request
+initializeEmailTransporter();
+
+// ============================================================================
+// 1. PAYMENT INTEGRATION - RAZORPAY
+// ============================================================================
+
+/**
+ * Create Razorpay Order for Payment
+ * POST /api/payments/create-order
+ */
+router.post('/payments/create-order', async (req, res) => {
+  try {
+    const { amount, currency = 'INR', receipt, customerEmail, customerName } = req.body;
+
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ error: 'Invalid amount' });
+    }
+
+    const options = {
+      amount: Math.round(amount * 100), // Convert to paise
+      currency,
+      receipt: receipt || `order_${Date.now()}`,
+      customer_notify: 1,
+      notes: {
+        email: customerEmail,
+        name: customerName,
+      },
+    };
+
+    const instance = initializeRazorpay();
+    if (!instance) {
+      return res.status(500).json({ error: 'Razorpay not configured' });
+    }
+    const order = await instance.orders.create(options);
+    res.status(200).json({ success: true, order });
+  } catch (error) {
+    console.error('Error creating Razorpay order:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Verify Razorpay Payment
+ * POST /api/payments/verify-payment
+ */
+router.post('/payments/verify-payment', async (req, res) => {
+  try {
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+
+    const shasum = crypto.createHmac('sha256', process.env.RAZORPAY_KEY_SECRET);
+    shasum.update(`${razorpay_order_id}|${razorpay_payment_id}`);
+    const digest = shasum.digest('hex');
+
+    if (digest !== razorpay_signature) {
+      return res.status(400).json({ error: 'Invalid signature' });
+    }
+
+    // Fetch payment details
+    const instance = initializeRazorpay();
+    if (!instance) {
+      return res.status(500).json({ error: 'Razorpay not configured' });
+    }
+    const payment = await instance.payments.fetch(razorpay_payment_id);
+
+    res.status(200).json({
+      success: true,
+      message: 'Payment verified',
+      payment: {
+        id: payment.id,
+        amount: payment.amount / 100,
+        currency: payment.currency,
+        status: payment.status,
+        method: payment.method,
+      },
+    });
+  } catch (error) {
+    console.error('Error verifying payment:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Get Payment Details
+ * GET /api/payments/:paymentId
+ */
+router.get('/payments/:paymentId', async (req, res) => {
+  try {
+    const instance = initializeRazorpay();
+    if (!instance) {
+      return res.status(500).json({ error: 'Razorpay not configured' });
+    }
+    const payment = await instance.payments.fetch(req.params.paymentId);
+    res.status(200).json({ success: true, payment });
+  } catch (error) {
+    console.error('Error fetching payment:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// 2. SHIPPING & DELIVERY
+// ============================================================================
+
+/**
+ * Calculate Shipping Cost Based on State
+ * POST /api/shipping/calculate
+ */
+router.post('/shipping/calculate', async (req, res) => {
+  try {
+    const { state, subtotal } = req.body;
+
+    if (!state) {
+      return res.status(400).json({ error: 'State is required' });
+    }
+
+    const db = initializeSupabase();
+
+    // Hardcoded fallback rates used when Supabase table doesn't exist
+    const defaultRate = {
+      base_shipping_cost: 99,
+      free_shipping_threshold: 999,
+      estimated_delivery_days_min: 5,
+      is_serviceable: true,
+    };
+
+    let shippingRate = defaultRate;
+
+    if (db) {
+      const { data, error } = await db
+        .from('shipping_rates')
+        .select('*')
+        .eq('state', state)
+        .eq('is_serviceable', true)
+        .single();
+
+      if (!error && data) {
+        shippingRate = data;
+      } else if (error && !error.message?.includes('does not exist') && error.code !== 'PGRST116') {
+        // PGRST116 = no rows found — use default
+        console.warn('Shipping rate fetch error:', error.message);
+      }
+    }
+
+    const cost =
+      subtotal >= shippingRate.free_shipping_threshold
+        ? 0
+        : shippingRate.base_shipping_cost;
+
+    const estimatedDelivery = new Date();
+    estimatedDelivery.setDate(
+      estimatedDelivery.getDate() + (shippingRate.estimated_delivery_days_min || 5)
+    );
+
+    res.status(200).json({
+      success: true,
+      shippingCost: cost,
+      isFreeShipping: cost === 0,
+      freeShippingThreshold: shippingRate.free_shipping_threshold,
+      amountNeededForFreeShipping:
+        subtotal >= shippingRate.free_shipping_threshold
+          ? 0
+          : shippingRate.free_shipping_threshold - subtotal,
+      estimatedDelivery,
+      state,
+    });
+  } catch (error) {
+    console.error('Error calculating shipping:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Get All Serviceable States
+ * GET /api/shipping/states
+ */
+router.get('/shipping/states', async (req, res) => {
+  try {
+    const { data: states, error } = await supabase
+      .from('shipping_rates')
+      .select('state, base_shipping_cost, free_shipping_threshold, is_serviceable')
+      .eq('is_serviceable', true)
+      .order('state');
+
+    if (error) throw error;
+
+    res.status(200).json({ success: true, states });
+  } catch (error) {
+    console.error('Error fetching states:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// 3. DISCOUNTS & COUPONS
+// ============================================================================
+
+/**
+ * Validate Discount Code
+ * POST /api/discounts/validate
+ */
+router.post('/discounts/validate', async (req, res) => {
+  try {
+    const { code, subtotal, items, userId } = req.body;
+
+    if (!code) {
+      return res.status(400).json({ error: 'Discount code is required' });
+    }
+
+    // Fetch discount
+    const { data: discount, error: discountError } = await supabase
+      .from('discounts')
+      .select('*')
+      .eq('code', code.toUpperCase())
+      .eq('is_active', true)
+      .single();
+
+    if (discountError || !discount) {
+      return res.status(404).json({ error: 'Invalid discount code' });
+    }
+
+    // Check if discount is within date range
+    const now = new Date();
+    if (new Date(discount.start_date) > now || new Date(discount.end_date) < now) {
+      return res.status(400).json({ error: 'Discount code has expired' });
+    }
+
+    // Check minimum order amount
+    if (subtotal < discount.min_order_amount) {
+      return res.status(400).json({
+        error: `Minimum order amount of ₹${discount.min_order_amount} required`,
+      });
+    }
+
+    // Check max uses
+    if (discount.total_max_uses && discount.current_uses >= discount.total_max_uses) {
+      return res.status(400).json({ error: 'Discount code limit reached' });
+    }
+
+    // Calculate discount amount
+    let discountAmount = 0;
+    if (discount.discount_type === 'percentage') {
+      discountAmount = (subtotal * discount.discount_value) / 100;
+      if (discount.max_discount_amount) {
+        discountAmount = Math.min(discountAmount, discount.max_discount_amount);
+      }
+    } else if (discount.discount_type === 'fixed_amount') {
+      discountAmount = discount.discount_value;
+    }
+
+    res.status(200).json({
+      success: true,
+      discount: {
+        id: discount.id,
+        code: discount.code,
+        description: discount.description,
+        discountAmount,
+        discountPercentage:
+          discount.discount_type === 'percentage' ? discount.discount_value : 0,
+        finalAmount: Math.max(0, subtotal - discountAmount),
+      },
+    });
+  } catch (error) {
+    console.error('Error validating discount:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Apply Discount Code
+ * POST /api/discounts/apply
+ */
+router.post('/discounts/apply', async (req, res) => {
+  try {
+    const { discountId } = req.body;
+
+    if (!discountId) {
+      return res.status(400).json({ error: 'Discount ID is required' });
+    }
+
+    // Increment usage count
+    const { error } = await supabase
+      .from('discounts')
+      .update({ current_uses: await getDiscountUsageCount(discountId) + 1 })
+      .eq('id', discountId);
+
+    if (error) throw error;
+
+    res.status(200).json({ success: true, message: 'Discount applied' });
+  } catch (error) {
+    console.error('Error applying discount:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Helper: Get discount usage count
+ */
+async function getDiscountUsageCount(discountId) {
+  const { data: discount } = await supabase
+    .from('discounts')
+    .select('current_uses')
+    .eq('id', discountId)
+    .single();
+  return discount?.current_uses || 0;
+}
+
+/**
+ * Get All Discounts (Admin/Public)
+ * GET /api/discounts
+ */
+router.get('/discounts', async (req, res) => {
+  try {
+    const db = initializeSupabase();
+    if (!db) {
+      return res.status(500).json({ error: 'Database not configured' });
+    }
+
+    const { data: discounts, error } = await db
+      .from('discounts')
+      .select('*')
+      .eq('is_active', true)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+
+    res.status(200).json({ success: true, discounts: discounts || [] });
+  } catch (error) {
+    console.error('Error fetching discounts:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// 4. BUNDLES
+// ============================================================================
+
+/**
+ * Get All Active Bundles
+ * GET /api/bundles
+ */
+router.get('/bundles', async (req, res) => {
+  try {
+    const { type, seasonal, featured } = req.query;
+
+    const db = initializeSupabase();
+    if (!db) {
+      return res.status(500).json({ error: 'Database not configured' });
+    }
+
+    let query = db.from('bundles').select('*').eq('is_active', true);
+
+    if (type) query = query.eq('bundle_type', type);
+    if (seasonal) query = query.eq('seasonal_category', seasonal);
+    if (featured === 'true') query = query.eq('is_featured', true);
+
+    const { data: bundles, error } = await query.order('display_order');
+
+    if (error) throw error;
+
+    res.status(200).json({ success: true, bundles });
+  } catch (error) {
+    console.error('Error fetching bundles:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Get Bundle Details
+ * GET /api/bundles/:bundleId
+ */
+router.get('/bundles/:bundleId', async (req, res) => {
+  try {
+    const { data: bundle, error: bundleError } = await supabase
+      .from('bundles')
+      .select('*')
+      .eq('id', req.params.bundleId)
+      .single();
+
+    if (bundleError || !bundle) {
+      return res.status(404).json({ error: 'Bundle not found' });
+    }
+
+    // Fetch product details
+    const { data: products, error: productsError } = await supabase
+      .from('products')
+      .select('*')
+      .in('id', bundle.product_ids);
+
+    if (productsError) throw productsError;
+
+    res.status(200).json({ success: true, bundle: { ...bundle, products } });
+  } catch (error) {
+    console.error('Error fetching bundle:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// 5. ORDER TRACKING
+// ============================================================================
+
+/**
+ * Get Order Tracking Status
+ * GET /api/orders/:orderId/tracking
+ */
+router.get('/orders/:orderId/tracking', async (req, res) => {
+  try {
+    const { orderId } = req.params;
+
+    // Fetch order
+    const { data: order, error: orderError } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('id', orderId)
+      .single();
+
+    if (orderError || !order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    // Fetch tracking events
+    const { data: events, error: eventsError } = await supabase
+      .from('order_tracking_events')
+      .select('*')
+      .eq('order_id', orderId)
+      .order('event_date', { ascending: false });
+
+    if (eventsError) throw eventsError;
+
+    res.status(200).json({
+      success: true,
+      order: {
+        id: order.id,
+        orderNumber: order.order_number,
+        status: order.order_status,
+        paymentStatus: order.payment_status,
+        estimatedDelivery: order.estimated_delivery_date,
+        actualDelivery: order.actual_delivery_date,
+        trackingNumber: order.tracking_number,
+        shippingState: order.shipping_state,
+      },
+      events,
+    });
+  } catch (error) {
+    console.error('Error fetching tracking:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Track Order by Order Number
+ * GET /api/orders/track/:orderNumber
+ */
+// Helper to generate dynamic order tracking events based on status
+function generateTrackingEvents(order) {
+  const events = [];
+  const createdAt = new Date(order.created_at || Date.now());
+  
+  events.push({
+    id: 'evt_1',
+    event_title: 'Order Placed',
+    event_description: 'Your order has been successfully placed and is awaiting confirmation.',
+    event_date: createdAt.toISOString(),
+    location: 'Warehouse'
+  });
+
+  const status = (order.status || 'Pending').toLowerCase();
+  if (status === 'pending') return events;
+
+  const confirmedDate = new Date(createdAt.getTime() + 2 * 60 * 60 * 1000);
+  events.push({
+    id: 'evt_2',
+    event_title: 'Order Confirmed',
+    event_description: 'We have confirmed your order and started preparation.',
+    event_date: confirmedDate.toISOString(),
+    location: 'Warehouse'
+  });
+  if (status === 'confirmed') return events.reverse();
+
+  const processingDate = new Date(createdAt.getTime() + 12 * 60 * 60 * 1000);
+  events.push({
+    id: 'evt_3',
+    event_title: 'Processing',
+    event_description: 'Your items are being carefully packed and prepared for shipment.',
+    event_date: processingDate.toISOString(),
+    location: 'Fulfillment Center'
+  });
+  if (status === 'processing') return events.reverse();
+
+  const shippedDate = new Date(createdAt.getTime() + 24 * 60 * 60 * 1000);
+  events.push({
+    id: 'evt_4',
+    event_title: 'Shipped',
+    event_description: `Your order has been shipped. Tracking number: ${order.tracking_number || 'TRK-' + order.id.slice(0, 8).toUpperCase()}`,
+    event_date: shippedDate.toISOString(),
+    location: 'Transit Facility'
+  });
+  if (status === 'shipped' || status === 'in_transit') return events.reverse();
+
+  const outDate = new Date(createdAt.getTime() + 48 * 60 * 60 * 1000);
+  events.push({
+    id: 'evt_5',
+    event_title: 'Out for Delivery',
+    event_description: 'Your package is out with the courier for delivery.',
+    event_date: outDate.toISOString(),
+    location: order.shipping_state || 'Local Hub'
+  });
+  if (status === 'out_for_delivery') return events.reverse();
+
+  const deliveredDate = order.actual_delivery_date ? new Date(order.actual_delivery_date) : new Date(createdAt.getTime() + 56 * 60 * 60 * 1000);
+  events.push({
+    id: 'evt_6',
+    event_title: 'Delivered',
+    event_description: 'Your order has been successfully delivered. Enjoy your purchase!',
+    event_date: deliveredDate.toISOString(),
+    location: order.shipping_state || 'Customer Address'
+  });
+  return events.reverse();
+}
+
+/**
+ * Track Order by Order Number
+ * GET /api/orders/track/:orderNumber
+ */
+router.get('/orders/track/:orderNumber', verifyToken, async (req, res) => {
+  try {
+    const { orderNumber } = req.params;
+    const userId = req.user.id;
+    const userEmail = req.user.email;
+    const userRole = req.user.role;
+
+    let order = null;
+    if (supabase) {
+      const { data, error: orderError } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('order_number', orderNumber)
+        .maybeSingle();
+
+      if (!orderError && data) {
+        order = data;
+      }
+    } else {
+      order = mockOrders.find(o => o.order_number === orderNumber);
+    }
+
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    // Security ownership check
+    const isOwner = (order.user_id && order.user_id === userId) ||
+                    (order.customer_email && order.customer_email.toLowerCase() === userEmail.toLowerCase());
+    const isAdmin = userRole === 'admin';
+
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({ error: 'You are not authorized to track this order' });
+    }
+
+    // Items are loaded directly from the JSONB items column of orders table (there is no order_items table)
+    const items = order.items || [];
+
+    // Events timeline loading or generation
+    let events = [];
+    if (supabase) {
+      try {
+        const { data: dbEvents, error: eventsError } = await supabase
+          .from('order_tracking_events')
+          .select('*')
+          .eq('order_id', order.id)
+          .order('event_date', { ascending: false });
+
+        if (!eventsError && dbEvents && dbEvents.length > 0) {
+          events = dbEvents;
+        } else {
+          events = generateTrackingEvents(order);
+        }
+      } catch {
+        events = generateTrackingEvents(order);
+      }
+    } else {
+      events = generateTrackingEvents(order);
+    }
+
+    res.status(200).json({
+      success: true,
+      order: {
+        id: order.id,
+        orderNumber: order.order_number,
+        customerName: order.customer_name,
+        customerEmail: order.customer_email,
+        status: order.status || 'Pending', // corrected status mapping
+        paymentStatus: order.payment_status,
+        estimatedDelivery: order.estimated_delivery_date,
+        actualDelivery: order.actual_delivery_date,
+        trackingNumber: order.tracking_number,
+        shippingState: order.shipping_state,
+        subtotal: order.subtotal || order.total_amount,
+        shippingCost: order.shipping_cost || 0,
+        tax: order.tax || 0,
+        discount: order.discount || 0,
+        totalAmount: order.total_amount,
+      },
+      items,
+      events,
+    });
+  } catch (error) {
+    console.error('Error tracking order:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Update Order Tracking Event (Admin)
+ * POST /api/orders/:orderId/tracking/update
+ */
+router.post('/orders/:orderId/tracking/update', async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { eventType, eventTitle, eventDescription, location, notes } = req.body;
+
+    if (!eventType) {
+      return res.status(400).json({ error: 'Event type is required' });
+    }
+
+    // Create tracking event
+    const { data: event, error } = await supabase
+      .from('order_tracking_events')
+      .insert([
+        {
+          order_id: orderId,
+          event_type: eventType,
+          event_title: eventTitle || eventType,
+          event_description: eventDescription,
+          location,
+          notes,
+        },
+      ])
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    // Update order status if needed
+    if (eventType === 'delivered') {
+      const { error: updateError } = await supabase
+        .from('orders')
+        .update({
+          order_status: 'delivered',
+          actual_delivery_date: new Date().toISOString(),
+        })
+        .eq('id', orderId);
+
+      if (updateError) throw updateError;
+    }
+
+    res.status(200).json({ success: true, event });
+  } catch (error) {
+    console.error('Error updating tracking:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// 6. EMAIL SUBSCRIPTIONS
+// ============================================================================
+
+/**
+ * Subscribe to Newsletter
+ * POST /api/subscriptions/subscribe
+ */
+router.post('/subscriptions/subscribe', async (req, res) => {
+  try {
+    const { email, firstName, lastName, subscriptionTypes = ['promotional', 'new_arrivals'] } =
+      req.body;
+
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+
+    const db = initializeSupabase();
+    if (!db) {
+      return res.status(500).json({ error: 'Database not configured' });
+    }
+
+    // Check if already subscribed
+    const { data: existing } = await db
+      .from('email_subscriptions')
+      .select('*')
+      .eq('email', email)
+      .single();
+
+    if (existing && existing.is_active) {
+      return res.status(400).json({ error: 'Email already subscribed' });
+    }
+
+    // Create or update subscription
+    const { data: subscription, error } = await db
+      .from('email_subscriptions')
+      .upsert(
+        [
+          {
+            email,
+            first_name: firstName,
+            last_name: lastName,
+            subscription_types: subscriptionTypes,
+            is_active: true,
+            consent_given: true,
+            consent_date: new Date().toISOString(),
+          },
+        ],
+        { onConflict: 'email' }
+      )
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    // Send welcome email
+    const emailTransporter = initializeEmailTransporter();
+    if (emailTransporter) {
+      try {
+        await emailTransporter.sendMail({
+          from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
+          to: email,
+          subject: 'Welcome to Grazel Newsletter',
+          html: `<h2>Thank you for subscribing!</h2><p>We'll keep you updated with our latest offers and new arrivals.</p>`,
+        });
+      } catch (emailErr) {
+        console.warn('Email send failed (subscription):', emailErr.message);
+      }
+    }
+
+    res.status(200).json({ success: true, message: 'Subscribed successfully', subscription });
+  } catch (error) {
+    console.error('Error subscribing:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Unsubscribe from Newsletter
+ * GET /api/subscriptions/unsubscribe/:token
+ */
+router.get('/subscriptions/unsubscribe/:token', async (req, res) => {
+  try {
+    const { data: subscription, error: fetchError } = await supabase
+      .from('email_subscriptions')
+      .select('*')
+      .eq('unsubscribe_token', req.params.token)
+      .single();
+
+    if (fetchError || !subscription) {
+      return res.status(404).json({ error: 'Invalid unsubscribe token' });
+    }
+
+    const { error } = await supabase
+      .from('email_subscriptions')
+      .update({
+        is_active: false,
+        unsubscribe_date: new Date().toISOString(),
+      })
+      .eq('id', subscription.id);
+
+    if (error) throw error;
+
+    res.status(200).json({ success: true, message: 'Unsubscribed successfully' });
+  } catch (error) {
+    console.error('Error unsubscribing:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// 7. PACKAGING OPTIONS
+// ============================================================================
+
+/**
+ * Get All Packaging Options
+ * GET /api/packaging
+ */
+router.get('/packaging', async (req, res) => {
+  try {
+    const db = initializeSupabase();
+    if (!db) {
+      // Return default packaging options if Supabase is not available
+      return res.status(200).json({
+        success: true,
+        options: [
+          { id: 'standard', name: 'Standard Packaging', price: 0, is_available: true, display_order: 1, description: 'Eco-friendly standard packaging' },
+          { id: 'premium', name: 'Premium Gift Box', price: 99, is_available: true, display_order: 2, description: 'Elegant gift box with tissue paper' },
+        ],
+      });
+    }
+
+    const { data: options, error } = await db
+      .from('packaging_options')
+      .select('*')
+      .eq('is_available', true)
+      .order('display_order');
+
+    if (error) {
+      // Table may not exist yet — return defaults
+      console.warn('packaging_options query error:', error.message);
+      return res.status(200).json({
+        success: true,
+        options: [
+          { id: 'standard', name: 'Standard Packaging', price: 0, is_available: true, display_order: 1 },
+          { id: 'premium', name: 'Premium Gift Box', price: 99, is_available: true, display_order: 2 },
+        ],
+      });
+    }
+
+    res.status(200).json({ success: true, options });
+  } catch (error) {
+    console.error('Error fetching packaging options:', error);
+    res.status(200).json({ success: true, options: [] });
+  }
+});
+
+// ============================================================================
+// 8. SEASONAL COLLECTIONS
+// ============================================================================
+
+/**
+ * Get All Active Seasonal Collections
+ * GET /api/collections
+ */
+router.get('/collections', async (req, res) => {
+  try {
+    const { data: collections, error } = await supabase
+      .from('seasonal_collections')
+      .select('*')
+      .eq('is_active', true)
+      .order('display_order');
+
+    if (error) throw error;
+
+    res.status(200).json({ success: true, collections });
+  } catch (error) {
+    console.error('Error fetching collections:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Get Collection by Slug
+ * GET /api/collections/:slug
+ */
+router.get('/collections/:slug', async (req, res) => {
+  try {
+    const { data: collection, error } = await supabase
+      .from('seasonal_collections')
+      .select('*')
+      .eq('slug', req.params.slug)
+      .eq('is_active', true)
+      .single();
+
+    if (error || !collection) {
+      return res.status(404).json({ error: 'Collection not found' });
+    }
+
+    // Fetch featured products
+    let products = [];
+    if (collection.featured_products && collection.featured_products.length > 0) {
+      const { data: prods } = await supabase
+        .from('products')
+        .select('*')
+        .in('id', collection.featured_products);
+      products = prods || [];
+    }
+
+    res.status(200).json({ success: true, collection: { ...collection, products } });
+  } catch (error) {
+    console.error('Error fetching collection:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// 9. PARTNER BRANDS
+// ============================================================================
+
+/**
+ * Get All Partner Brands
+ * GET /api/brands
+ */
+router.get('/brands', async (req, res) => {
+  try {
+    const { data: brands, error } = await supabase
+      .from('partner_brands')
+      .select('*')
+      .eq('is_active', true)
+      .order('display_order');
+
+    if (error) throw error;
+
+    res.status(200).json({ success: true, brands });
+  } catch (error) {
+    console.error('Error fetching brands:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// 10. SIZE GUIDES
+// ============================================================================
+
+/**
+ * Get All Size Guides (Admin)
+ * GET /api/size-guides/all
+ */
+router.get('/size-guides/all', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    if (supabase) {
+      const { data: guides, error } = await supabase
+        .from('size_guides')
+        .select('*')
+        .order('product_type, size_code');
+
+      if (error) throw error;
+      return res.status(200).json(guides || []);
+    }
+    res.status(200).json(mockSizeGuides || []);
+  } catch (error) {
+    console.error('Error fetching all size guides:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Get Size Guide by Product Type
+ * GET /api/size-guides/:productType
+ */
+router.get('/size-guides/:productType', async (req, res) => {
+  try {
+    const { unit = 'cm' } = req.query;
+    const { productType } = req.params;
+
+    if (supabase) {
+      const { data: guides, error } = await supabase
+        .from('size_guides')
+        .select('*')
+        .eq('product_type', productType)
+        .eq('unit', unit)
+        .eq('is_active', true)
+        .order('size_code');
+
+      if (error) throw error;
+      return res.status(200).json({ success: true, guides });
+    }
+    const filtered = mockSizeGuides.filter(
+      sg => sg.product_type === productType && sg.unit === unit && sg.is_active
+    );
+    res.status(200).json({ success: true, guides: filtered });
+  } catch (error) {
+    console.error('Error fetching size guides:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Create Size Guide (Admin)
+ * POST /api/size-guides
+ */
+router.post('/size-guides', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { productType, sizeCode, unit, measurements } = req.body;
+
+    if (!productType || !sizeCode || !measurements) {
+      return res.status(400).json({ error: 'Product type, size code, and measurements are required' });
+    }
+
+    const payload = {
+      id: `sg_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      product_type: productType,
+      size_code: sizeCode.toUpperCase(),
+      unit: unit || 'cm',
+      measurements: measurements,
+      is_active: true,
+    };
+
+    if (supabase) {
+      const { data: guide, error } = await supabase
+        .from('size_guides')
+        .insert([
+          {
+            id: payload.id,
+            product_type: payload.product_type,
+            size_code: payload.size_code,
+            unit: payload.unit,
+            measurements: payload.measurements,
+            is_active: payload.is_active,
+          },
+        ])
+        .select()
+        .single();
+
+      if (error) throw error;
+      return res.status(200).json({ success: true, guide });
+    }
+
+    // In-memory duplicate check
+    const duplicate = mockSizeGuides.some(
+      sg => sg.product_type === productType && sg.size_code === payload.size_code && sg.unit === payload.unit
+    );
+    if (duplicate) {
+      return res.status(409).json({ message: `Size ${payload.size_code} already exists for ${productType} (${payload.unit})` });
+    }
+
+    mockSizeGuides.push(payload);
+    res.status(200).json({ success: true, guide: payload });
+  } catch (error) {
+    console.error('Error creating size guide:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Update Size Guide (Admin)
+ * PUT /api/size-guides/:id
+ */
+router.put('/size-guides/:id', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { productType, sizeCode, unit, measurements } = req.body;
+
+    if (!productType || !sizeCode || !measurements) {
+      return res.status(400).json({ error: 'Product type, size code, and measurements are required' });
+    }
+
+    if (supabase) {
+      const { data: guide, error } = await supabase
+        .from('size_guides')
+        .update({
+          product_type: productType,
+          size_code: sizeCode.toUpperCase(),
+          unit: unit || 'cm',
+          measurements: measurements,
+        })
+        .eq('id', req.params.id)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return res.status(200).json({ success: true, guide });
+    }
+
+    const index = mockSizeGuides.findIndex(sg => String(sg.id) === String(req.params.id));
+    if (index !== -1) {
+      mockSizeGuides[index] = {
+        ...mockSizeGuides[index],
+        product_type: productType,
+        size_code: sizeCode.toUpperCase(),
+        unit: unit || 'cm',
+        measurements: measurements,
+      };
+      return res.status(200).json({ success: true, guide: mockSizeGuides[index] });
+    }
+    res.status(404).json({ error: 'Size guide not found' });
+  } catch (error) {
+    console.error('Error updating size guide:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Delete Size Guide (Admin)
+ * DELETE /api/size-guides/:id
+ */
+router.delete('/size-guides/:id', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (supabase) {
+      const { error } = await supabase
+        .from('size_guides')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+      return res.status(200).json({ success: true, message: 'Size guide deleted' });
+    }
+
+    const index = mockSizeGuides.findIndex(sg => String(sg.id) === String(id));
+    if (index !== -1) {
+      mockSizeGuides.splice(index, 1);
+      return res.status(200).json({ success: true, message: 'Size guide deleted' });
+    }
+    res.status(404).json({ error: 'Size guide not found' });
+  } catch (error) {
+    console.error('Error deleting size guide:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// 11. COOKIE CONSENT
+// ============================================================================
+
+/**
+ * Save Cookie Consent
+ * POST /api/cookies/consent
+ */
+router.post('/cookies/consent', async (req, res) => {
+  try {
+    const { userId, sessionId, ipAddress, consent } = req.body;
+
+    const { data: consentRecord, error } = await supabase
+      .from('cookie_consents')
+      .insert([
+        {
+          user_id: userId,
+          session_id: sessionId,
+          ip_address: ipAddress,
+          essential_cookies: consent.essential || true,
+          analytics_cookies: consent.analytics || false,
+          marketing_cookies: consent.marketing || false,
+          preferences_cookies: consent.preferences || false,
+        },
+      ])
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    res.status(200).json({ success: true, consent: consentRecord });
+  } catch (error) {
+    console.error('Error saving cookie consent:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// 12. CONTACT FORM
+// ============================================================================
+
+/**
+ * Submit Contact Form
+ * POST /api/contact/submit
+ */
+router.post('/contact/submit', async (req, res) => {
+  try {
+    const { name, email, phone, subject, message } = req.body;
+
+    if (!name || !email || !message) {
+      return res.status(400).json({ error: 'Required fields missing' });
+    }
+
+    const adminEmail = process.env.CONTACT_EMAIL || process.env.EMAIL_USER || 'grazelapparel@gmail.com';
+    const fromEmail  = process.env.EMAIL_FROM    || process.env.EMAIL_USER || 'grazelapparel@gmail.com';
+
+    // Log submission for visibility even if email fails
+    console.log(`[Contact Form] From: ${name} <${email}> | Subject: ${subject || 'General'}`);
+
+    const emailTransporter = initializeEmailTransporter();
+    if (!emailTransporter) {
+      // Still acknowledge the user — log server-side and return success so the form doesn't appear broken
+      console.error('[Contact Form] Email transporter unavailable. Submission logged server-side.');
+      console.error(`[Contact Form Data] name=${name} email=${email} phone=${phone} subject=${subject} message=${message}`);
+      return res.status(200).json({
+        success: true,
+        message: 'Message received. Our team will contact you within 24–48 hours.',
+        warning: 'email_unavailable',
+      });
+    }
+
+    // 1. Notify admin
+    try {
+      await emailTransporter.sendMail({
+        from: `"Grazel Contact Form" <${fromEmail}>`,
+        to: adminEmail,
+        replyTo: email,
+        subject: `[Contact Form] ${subject || 'New message from ' + name}`,
+        html: `
+          <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px;border:1px solid #e5e5e5;border-radius:8px">
+            <h2 style="color:#1a1a1a;margin-bottom:24px">New Contact Form Submission</h2>
+            <table style="width:100%;border-collapse:collapse">
+              <tr><td style="padding:8px 0;color:#666;width:100px"><strong>Name</strong></td><td style="padding:8px 0">${name}</td></tr>
+              <tr><td style="padding:8px 0;color:#666"><strong>Email</strong></td><td style="padding:8px 0"><a href="mailto:${email}">${email}</a></td></tr>
+              <tr><td style="padding:8px 0;color:#666"><strong>Phone</strong></td><td style="padding:8px 0">${phone || 'Not provided'}</td></tr>
+              <tr><td style="padding:8px 0;color:#666"><strong>Subject</strong></td><td style="padding:8px 0">${subject || 'General enquiry'}</td></tr>
+            </table>
+            <div style="margin-top:24px;padding:16px;background:#f9f9f9;border-radius:4px">
+              <strong style="color:#666">Message:</strong>
+              <p style="margin:8px 0 0;white-space:pre-wrap">${message}</p>
+            </div>
+            <p style="margin-top:24px;font-size:12px;color:#999">Reply to this email to respond directly to ${name}.</p>
+          </div>
+        `,
+      });
+    } catch (adminMailErr) {
+      console.warn('[Contact Form] Admin notification failed:', adminMailErr.message);
+    }
+
+    // 2. Auto-reply to user
+    try {
+      await emailTransporter.sendMail({
+        from: `"Grazel Atelier" <${fromEmail}>`,
+        to: email,
+        subject: 'We received your message – Grazel Atelier',
+        html: `
+          <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px;border:1px solid #e5e5e5;border-radius:8px">
+            <h2 style="color:#1a1a1a">Thank you for reaching out, ${name}!</h2>
+            <p style="color:#444;line-height:1.6">We've received your message and our team will get back to you within <strong>24–48 hours</strong>.</p>
+            <div style="margin:24px 0;padding:16px;background:#f9f9f9;border-radius:4px">
+              <strong style="color:#666">Your message:</strong>
+              <p style="margin:8px 0 0;white-space:pre-wrap;color:#444">${message}</p>
+            </div>
+            <p style="color:#444">In the meantime, feel free to browse our latest collections at <a href="https://grazel.vercel.app" style="color:#1a1a1a">grazel.vercel.app</a>.</p>
+            <hr style="margin:24px 0;border:none;border-top:1px solid #e5e5e5">
+            <p style="font-size:12px;color:#999">Grazel Atelier · grazelapparel@gmail.com</p>
+          </div>
+        `,
+      });
+    } catch (userMailErr) {
+      console.warn('[Contact Form] User auto-reply failed:', userMailErr.message);
+    }
+
+    res.status(200).json({ success: true, message: 'Message sent successfully' });
+  } catch (error) {
+    console.error('Contact form error:', error.message);
+    res.status(500).json({ error: 'Failed to process contact form: ' + error.message });
+  }
+});
+
+// ============================================================================
+// 13. ADMIN ENDPOINTS
+// ============================================================================
+
+/**
+ * Create Discount (Admin)
+ * POST /api/admin/discounts/create
+ */
+router.post('/admin/discounts/create', async (req, res) => {
+  try {
+    const {
+      code,
+      description,
+      discountType,
+      discountValue,
+      appliesto,
+      productIds,
+      categoryIds,
+      bundleIds,
+      maxUses,
+      totalMaxUses,
+      startDate,
+      endDate,
+      minOrderAmount,
+      isStackable,
+    } = req.body;
+
+    const { data: discount, error } = await supabase
+      .from('discounts')
+      .insert([
+        {
+          code: code.toUpperCase(),
+          description,
+          discount_type: discountType,
+          discount_value: discountValue,
+          applies_to: appliesto,
+          product_ids: productIds || [],
+          category_ids: categoryIds || [],
+          bundle_ids: bundleIds || [],
+          max_uses_per_customer: maxUses,
+          total_max_uses: totalMaxUses,
+          start_date: startDate,
+          end_date: endDate,
+          min_order_amount: minOrderAmount || 0,
+          is_stackable: isStackable || false,
+        },
+      ])
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    res.status(200).json({ success: true, discount });
+  } catch (error) {
+    console.error('Error creating discount:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Create Bundle (Admin)
+ * POST /api/admin/bundles/create
+ */
+router.post('/admin/bundles/create', async (req, res) => {
+  try {
+    const {
+      name,
+      description,
+      bundleType,
+      productIds,
+      bundlePrice,
+      originalPrice,
+      images,
+      seasonalCategory,
+      stockQuantity,
+    } = req.body;
+
+    const discountPercentage = Math.round(((originalPrice - bundlePrice) / originalPrice) * 100);
+    const savingsAmount = originalPrice - bundlePrice;
+
+    const { data: bundle, error } = await supabase
+      .from('bundles')
+      .insert([
+        {
+          name,
+          description,
+          bundle_type: bundleType,
+          product_ids: productIds,
+          bundle_price: bundlePrice,
+          original_price: originalPrice,
+          discount_percentage: discountPercentage,
+          savings_amount: savingsAmount,
+          images: images || [],
+          seasonal_category: seasonalCategory,
+          stock_quantity: stockQuantity || 0,
+        },
+      ])
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    res.status(200).json({ success: true, bundle });
+  } catch (error) {
+    console.error('Error creating bundle:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Update Shipping Rate (Admin)
+ * PUT /api/admin/shipping-rates/:state
+ */
+router.put('/admin/shipping-rates/:state', async (req, res) => {
+  try {
+    const { baseShippingCost, freeShippingThreshold, estimatedDeliveryMin, estimatedDeliveryMax } =
+      req.body;
+
+    const { data: rate, error } = await supabase
+      .from('shipping_rates')
+      .update({
+        base_shipping_cost: baseShippingCost,
+        free_shipping_threshold: freeShippingThreshold,
+        estimated_delivery_days_min: estimatedDeliveryMin,
+        estimated_delivery_days_max: estimatedDeliveryMax,
+      })
+      .eq('state', req.params.state)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    res.status(200).json({ success: true, rate });
+  } catch (error) {
+    console.error('Error updating shipping rate:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CONTENT MANAGEMENT SYSTEM (CMS)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// GET all content
+router.get('/content', async (req, res) => {
+  try {
+    const db = initializeSupabase();
+    if (!db) {
+      return res.status(500).json({ error: 'Database not initialized' });
+    }
+
+    const { data, error } = await db.from('cms_content').select('*').order('created_at', { ascending: false });
+    if (error) throw error;
+
+    res.json(data || []);
+  } catch (error) {
+    console.error('Error fetching content:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET content by page
+router.get('/content/page/:page', async (req, res) => {
+  try {
+    const db = initializeSupabase();
+    if (!db) {
+      return res.status(500).json({ error: 'Database not initialized' });
+    }
+
+    const { data, error } = await db
+      .from('cms_content')
+      .select('*')
+      .eq('page', req.params.page)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+
+    res.json(data || []);
+  } catch (error) {
+    console.error('Error fetching page content:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET single content by key
+router.get('/content/key/:key', async (req, res) => {
+  try {
+    const db = initializeSupabase();
+    if (!db) {
+      return res.status(500).json({ error: 'Database not initialized' });
+    }
+
+    const { data, error } = await db
+      .from('cms_content')
+      .select('*')
+      .eq('key', req.params.key)
+      .single();
+    if (error) throw error;
+
+    res.json(data);
+  } catch (error) {
+    console.error('Error fetching content by key:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// CREATE new content
+router.post('/content', async (req, res) => {
+  try {
+    const db = initializeSupabase();
+    if (!db) {
+      return res.status(500).json({ error: 'Database not initialized' });
+    }
+
+    const { key, title, content, type, page } = req.body;
+
+    if (!key || !title || !content) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    const { data, error } = await db
+      .from('cms_content')
+      .insert([
+        {
+          key,
+          title,
+          content,
+          type: type || 'text',
+          page: page || 'other',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+      ])
+      .select();
+    if (error) throw error;
+
+    res.json(data[0]);
+  } catch (error) {
+    console.error('Error creating content:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// UPDATE content
+router.put('/content/:id', async (req, res) => {
+  try {
+    const db = initializeSupabase();
+    if (!db) {
+      return res.status(500).json({ error: 'Database not initialized' });
+    }
+
+    const { key, title, content, type, page } = req.body;
+
+    const { data, error } = await db
+      .from('cms_content')
+      .update({
+        key,
+        title,
+        content,
+        type: type || 'text',
+        page: page || 'other',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', req.params.id)
+      .select();
+    if (error) throw error;
+
+    res.json(data[0]);
+  } catch (error) {
+    console.error('Error updating content:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// DELETE content
+router.delete('/content/:id', async (req, res) => {
+  try {
+    const db = initializeSupabase();
+    if (!db) {
+      return res.status(500).json({ error: 'Database not initialized' });
+    }
+
+    const { error } = await db.from('cms_content').delete().eq('id', req.params.id);
+    if (error) throw error;
+
+    res.json({ success: true, message: 'Content deleted' });
+  } catch (error) {
+    console.error('Error deleting content:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// EMAIL NOTIFICATIONS
+// ============================================================================
+
+/**
+ * Send Order Confirmation Email
+ * POST /api/emails/order-confirmation
+ */
+router.post('/emails/order-confirmation', async (req, res) => {
+  try {
+    const { orderId, customerEmail, customerName, items, totalAmount, orderNumber } = req.body;
+
+    if (!customerEmail || !orderId) {
+      return res.status(400).json({ error: 'Email and Order ID are required' });
+    }
+
+    const order = {
+      id: orderId,
+      order_number: orderNumber,
+      customer_email: customerEmail,
+      customer_name: customerName,
+      total_amount: totalAmount,
+      created_at: new Date().toISOString(),
+      shipping_address: req.body.shipping_address || '',
+    };
+
+    const result = await emailService.sendOrderConfirmationEmail(order, items);
+
+    if (result.success) {
+      res.json({ success: true, message: 'Order confirmation email sent', messageId: result.messageId });
+    } else {
+      res.status(500).json({ success: false, error: result.error });
+    }
+  } catch (error) {
+    console.error('Error sending order confirmation email:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Send Order Shipped Email
+ * POST /api/emails/order-shipped
+ */
+router.post('/emails/order-shipped', async (req, res) => {
+  try {
+    const { orderId, customerEmail, orderNumber, trackingNumber, estimatedDeliveryDate } = req.body;
+
+    if (!customerEmail || !orderId) {
+      return res.status(400).json({ error: 'Email and Order ID are required' });
+    }
+
+    const order = {
+      id: orderId,
+      order_number: orderNumber,
+      customer_email: customerEmail,
+      estimated_delivery_date: estimatedDeliveryDate,
+    };
+
+    const result = await emailService.sendOrderShippedEmail(order, trackingNumber);
+
+    if (result.success) {
+      res.json({ success: true, message: 'Shipping notification email sent', messageId: result.messageId });
+    } else {
+      res.status(500).json({ success: false, error: result.error });
+    }
+  } catch (error) {
+    console.error('Error sending shipping email:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Send Order Delivered Email
+ * POST /api/emails/order-delivered
+ */
+router.post('/emails/order-delivered', async (req, res) => {
+  try {
+    const { orderId, customerEmail, orderNumber, deliveredDate } = req.body;
+
+    if (!customerEmail || !orderId) {
+      return res.status(400).json({ error: 'Email and Order ID are required' });
+    }
+
+    const order = {
+      id: orderId,
+      order_number: orderNumber,
+      customer_email: customerEmail,
+      actual_delivery_date: deliveredDate,
+    };
+
+    const result = await emailService.sendOrderDeliveredEmail(order);
+
+    if (result.success) {
+      res.json({ success: true, message: 'Delivery confirmation email sent', messageId: result.messageId });
+    } else {
+      res.status(500).json({ success: false, error: result.error });
+    }
+  } catch (error) {
+    console.error('Error sending delivery email:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Send Review Request Email
+ * POST /api/emails/review-request
+ */
+router.post('/emails/review-request', async (req, res) => {
+  try {
+    const { customerEmail, customerName, productName, orderNumber } = req.body;
+
+    if (!customerEmail) {
+      return res.status(400).json({ error: 'Customer email is required' });
+    }
+
+    const result = await emailService.sendReviewRequestEmail(
+      customerEmail,
+      customerName,
+      productName,
+      orderNumber
+    );
+
+    if (result.success) {
+      res.json({ success: true, message: 'Review request email sent', messageId: result.messageId });
+    } else {
+      res.status(500).json({ success: false, error: result.error });
+    }
+  } catch (error) {
+    console.error('Error sending review request email:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Send Return Approved Email
+ * POST /api/emails/return-approved
+ */
+router.post('/emails/return-approved', async (req, res) => {
+  try {
+    const { orderId, customerEmail, orderNumber, returnAmount } = req.body;
+
+    if (!customerEmail || !orderId) {
+      return res.status(400).json({ error: 'Email and Order ID are required' });
+    }
+
+    const order = {
+      id: orderId,
+      order_number: orderNumber,
+      customer_email: customerEmail,
+    };
+
+    const result = await emailService.sendReturnApprovedEmail(order, returnAmount);
+
+    if (result.success) {
+      res.json({ success: true, message: 'Return approval email sent', messageId: result.messageId });
+    } else {
+      res.status(500).json({ success: false, error: result.error });
+    }
+  } catch (error) {
+    console.error('Error sending return approval email:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Send Bulk Promotional Email
+ * POST /api/emails/promotional
+ */
+router.post('/emails/promotional', async (req, res) => {
+  try {
+    const { recipients, subject, html } = req.body;
+
+    if (!recipients || !Array.isArray(recipients) || recipients.length === 0) {
+      return res.status(400).json({ error: 'Recipients array is required' });
+    }
+
+    if (!subject || !html) {
+      return res.status(400).json({ error: 'Subject and HTML content are required' });
+    }
+
+    const result = await emailService.sendBulkPromotionalEmail(recipients, subject, html);
+
+    res.json({
+      success: result.success,
+      message: `Promotional email campaign sent: ${result.sent} successful, ${result.failed} failed`,
+      ...result,
+    });
+  } catch (error) {
+    console.error('Error sending promotional email:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+export default router;

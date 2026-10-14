@@ -1,0 +1,397 @@
+@import '@fontsource/playfair-display/400.css';
+@import '@fontsource/playfair-display/500.css';
+@import '@fontsource/playfair-display/600.css';
+@import '@fontsource/inter/300.css';
+@import '@fontsource/inter/400.css';
+@import '@fontsource/inter/500.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* GRAZEL Design System — Old Money Atelier Luxury */
+/* Palette: Refined Bronze Gold × Ivory × Cream × Charcoal */
+
+@layer base {
+  :root {
+    /* Core Palette - High-End Atelier */
+    --background: 36 20% 96%;        /* #F7F5F2 Ivory */
+    --background-cream: 36 33% 97.5%; /* #FBF9F6 Cream */
+    --background-warm: 35 25% 93%;   /* #F3EFEA Soft Warm */
+    --foreground: 0 0% 10%;          /* #1A1A1A Charcoal */
+    
+    /* Primary - Refined Bronze Gold */
+    --primary: 30 34% 49%;           /* #A67C52 Gold */
+    --primary-foreground: 36 20% 96%;/* #F7F5F2 Ivory */
+    --primary-light: 32 44% 60%;     /* #C49A6C Champagne Gold */
+    --primary-hover: 30 38% 42%;     /* Deep bronze hover */
+    
+    /* Secondary - Warm Cream Card Inset */
+    --secondary: 36 33% 96%;
+    --secondary-foreground: 0 0% 10%;
+    
+    /* Muted - Tactile Paper Grays */
+    --muted: 36 15% 92%;
+    --muted-foreground: 25 8% 46%;
+    
+    /* Accent - Subtle Champagne Wash */
+    --accent: 35 25% 93%;
+    --accent-foreground: 0 0% 10%;
+    
+    /* Card Surfaces - Pure White Contrast Layers */
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 10%;
+    
+    /* Popover - White */
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 10%;
+    
+    /* Destructive */
+    --destructive: 0 60% 50%;
+    --destructive-foreground: 0 0% 100%;
+    
+    /* Hairlines & Borders - Beige (#EAE3D9) */
+    --border: 35 27% 88%;
+    --border-light: 36 20% 92%;
+    --input: 35 27% 88%;
+    --ring: 30 34% 49%;
+    
+    /* Radius - Minimal architectural corners */
+    --radius: 0.125rem;
+    
+    /* Typography */
+    --font-serif: 'Fraunces', 'Playfair Display', Georgia, serif;
+    --font-sans: 'Manrope', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    
+    /* Shadows - Ultra Soft & Restrained */
+    --shadow-sm: 0 1px 3px 0 rgba(26, 26, 26, 0.03);
+    --shadow-md: 0 6px 18px -4px rgba(26, 26, 26, 0.05);
+    --shadow-lg: 0 16px 36px -6px rgba(26, 26, 26, 0.07);
+    --shadow-mega: 0 24px 60px -12px rgba(26, 26, 26, 0.10);
+    
+    /* Navigation */
+    --nav-height: 64px;
+    --utility-height: 38px;
+    --header-total: 102px;
+    
+    /* Transitions - Calm & Deliberate Luxury Ease */
+    --transition-fast: 150ms cubic-bezier(0.76, 0, 0.24, 1);
+    --transition-base: 280ms cubic-bezier(0.76, 0, 0.24, 1);
+    --transition-slow: 450ms cubic-bezier(0.76, 0, 0.24, 1);
+
+    /* Sidebar */
+    --sidebar-background: 36 20% 96%;
+    --sidebar-foreground: 0 0% 10%;
+    --sidebar-primary: 30 34% 49%;
+    --sidebar-primary-foreground: 36 20% 96%;
+    --sidebar-accent: 36 33% 94%;
+    --sidebar-accent-foreground: 0 0% 10%;
+    --sidebar-border: 35 27% 88%;
+    --sidebar-ring: 30 34% 49%;
+  }
+
+  .dark {
+    --background: 0 0% 10%;          /* #1A1A1A Charcoal */
+    --background-cream: 0 0% 12%;
+    --background-warm: 0 0% 14%;
+    --foreground: 36 20% 96%;        /* #F7F5F2 Ivory */
+    
+    --primary: 32 44% 60%;           /* #C49A6C Gold Light */
+    --primary-foreground: 0 0% 10%;
+    
+    --secondary: 0 0% 14%;
+    --secondary-foreground: 36 20% 96%;
+    
+    --muted: 0 0% 18%;
+    --muted-foreground: 36 15% 70%;
+    
+    --card: 0 0% 12%;
+    --card-foreground: 36 20% 96%;
+    
+    --popover: 0 0% 12%;
+    --popover-foreground: 36 20% 96%;
+    
+    --border: 0 0% 20%;
+    --border-light: 0 0% 16%;
+    --input: 0 0% 22%;
+    --ring: 32 44% 60%;
+
+    --sidebar-background: 0 0% 10%;
+    --sidebar-foreground: 36 20% 96%;
+    --sidebar-primary: 32 44% 60%;
+    --sidebar-primary-foreground: 0 0% 10%;
+    --sidebar-accent: 0 0% 16%;
+    --sidebar-accent-foreground: 36 20% 96%;
+    --sidebar-border: 0 0% 20%;
+    --sidebar-ring: 32 44% 60%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  
+  html {
+    scroll-behavior: smooth;
+    background-color: #F7F5F2;
+  }
+  
+  body {
+    @apply bg-ivory text-charcoal antialiased;
+    font-family: var(--font-sans);
+    font-weight: 400;
+    letter-spacing: -0.01em;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-serif);
+    font-weight: 400;
+    letter-spacing: -0.02em;
+    text-wrap: balance;
+    color: inherit;
+  }
+
+  /* Selection styling - Refined Bronze Gold fill with clean white text */
+  ::selection {
+    background: #A67C52;
+    color: #FFFFFF;
+  }
+
+  /* Custom Smooth Scrollbar with Ivory track and Gold hover state */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #F7F5F2;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #A67C52;
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #C49A6C;
+  }
+
+  /* Accessibility focus styles with visible luxury focus rings */
+  a:focus-visible,
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  [tabindex]:focus-visible {
+    outline: 2px solid #A67C52;
+    outline-offset: 3px;
+  }
+}
+
+@layer components {
+  /* Editorial Micro-Copy Token */
+  .eyebrow-luxury {
+    font-family: var(--font-sans);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3em;
+    color: #A67C52;
+  }
+
+  /* Navigation Underline Transition */
+  .nav-underline {
+    @apply relative inline-block;
+  }
+  
+  .nav-underline::after {
+    content: '';
+    @apply absolute bottom-0 left-0 w-0 h-[1.5px] bg-gold transition-all duration-300 ease-out;
+  }
+  
+  .nav-underline:hover::after,
+  .nav-underline.active::after {
+    @apply w-full;
+  }
+  
+  /* Filter Chip */
+  .filter-chip {
+    @apply px-3 py-1.5 text-xs font-sans uppercase tracking-[0.15em] border border-border 
+           transition-colors duration-200 cursor-pointer
+           hover:border-gold hover:text-gold;
+  }
+  
+  .filter-chip.active {
+    @apply border-gold text-gold bg-gold/5 font-semibold;
+  }
+  
+  /* Product Card */
+  .product-card {
+    @apply cursor-pointer transition-transform duration-500;
+  }
+  
+  .product-card-image {
+    @apply overflow-hidden relative bg-cream;
+  }
+  
+  .product-card-image img {
+    @apply transition-transform duration-700 ease-out;
+  }
+  
+  .product-card:hover .product-card-image img {
+    transform: scale(1.05);
+  }
+  
+  /* Accordion Quiet Style */
+  .accordion-quiet {
+    @apply border-b border-border/60 py-4;
+  }
+  
+  .accordion-quiet:first-child {
+    @apply border-t;
+  }
+  
+  /* Button Variants */
+  .btn-primary {
+    @apply bg-gold text-white px-8 py-3.5 
+           text-xs tracking-[0.2em] uppercase font-semibold
+           transition-all duration-300
+           hover:bg-[#8B6540] shadow-sm;
+  }
+  
+  .btn-secondary {
+    @apply bg-transparent text-charcoal px-8 py-3.5
+           text-xs tracking-[0.2em] uppercase font-semibold
+           border border-charcoal
+           transition-all duration-300
+           hover:bg-charcoal hover:text-ivory;
+  }
+  
+  .btn-ghost {
+    @apply text-muted-foreground text-xs uppercase tracking-[0.2em] font-semibold
+           transition-colors duration-200
+           hover:text-charcoal;
+  }
+
+  /* Focus States */
+  .focus-luxury:focus-visible {
+    @apply outline-none ring-1 ring-gold ring-offset-2 ring-offset-ivory;
+  }
+}
+
+@layer utilities {
+  .font-serif {
+    font-family: var(--font-serif);
+  }
+  
+  .font-sans {
+    font-family: var(--font-sans);
+  }
+  
+  .text-balance {
+    text-wrap: balance;
+  }
+  
+  .bg-ivory {
+    background-color: #F7F5F2;
+  }
+  
+  .bg-cream {
+    background-color: #FBF9F6;
+  }
+  
+  .bg-charcoal {
+    background-color: #1A1A1A;
+  }
+
+  .text-gold {
+    color: #A67C52;
+  }
+
+  .text-gold-light {
+    color: #C49A6C;
+  }
+
+  .border-charcoal-10 {
+    border-color: rgba(26, 26, 26, 0.1);
+  }
+
+  .border-ivory-15 {
+    border-color: rgba(247, 245, 242, 0.15);
+  }
+
+  /* Watermark Outline Text */
+  .text-watermark {
+    -webkit-text-stroke: 1px rgba(166, 124, 82, 0.25);
+    color: transparent;
+  }
+
+  .text-watermark-subtle {
+    -webkit-text-stroke: 1px rgba(26, 26, 26, 0.08);
+    color: transparent;
+  }
+
+  /* Sheen sweep effect on hover */
+  .sheen-sweep {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .sheen-sweep::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 60%;
+    height: 100%;
+    background: linear-gradient(
+      120deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.35) 50%,
+      transparent 100%
+    );
+    transform: skewX(-25deg);
+    transition: transform 0.8s cubic-bezier(0.76, 0, 0.24, 1), left 0.8s cubic-bezier(0.76, 0, 0.24, 1);
+    pointer-events: none;
+  }
+
+  .sheen-sweep:hover::before {
+    left: 200%;
+  }
+
+  /* Infinite Slow Ticker Marquee */
+  @keyframes marquee-left {
+    0% { transform: translateX(0%); }
+    100% { transform: translateX(-50%); }
+  }
+
+  @keyframes marquee-right {
+    0% { transform: translateX(-50%); }
+    100% { transform: translateX(0%); }
+  }
+
+  .animate-marquee-left {
+    display: flex;
+    width: max-content;
+    animation: marquee-left 42s linear infinite;
+  }
+
+  .animate-marquee-right {
+    display: flex;
+    width: max-content;
+    animation: marquee-right 42s linear infinite;
+  }
+
+  .animate-marquee-left:hover,
+  .animate-marquee-right:hover {
+    animation-play-state: paused;
+  }
+
+  /* Editorial collage image shadow — soft natural lift */
+  .shadow-editorial {
+    box-shadow:
+      0 2px 8px rgba(26, 26, 26, 0.06),
+      0 8px 24px rgba(26, 26, 26, 0.10),
+      0 20px 48px rgba(26, 26, 26, 0.08);
+  }
+}
